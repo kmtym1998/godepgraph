@@ -2,19 +2,17 @@
 
 godepgraph is a program for generating a dependency graph of Go packages.
 
-[![Build Status](https://travis-ci.org/kisielk/godepgraph.png?branch=master)](https://travis-ci.org/kisielk/godepgraph)
-
 ## Install
 
-    go install github.com/kisielk/godepgraph@latest
+    go install github.com/kmtym1998/godepgraph@latest
 
 ## Use
 
 For basic usage, just give the package path of interest as the first
 argument:
 
-    godepgraph github.com/kisielk/godepgraph
-    
+    godepgraph github.com/kmtym1998/godepgraph
+
 If you intent to graph a go mod project, your package should be passed as a relative path:
 
     godepgraph ./pkg/api
@@ -22,7 +20,7 @@ If you intent to graph a go mod project, your package should be passed as a rela
 The output is a graph in [Graphviz][graphviz] dot format. If you have the
 graphviz tools installed you can render it by piping the output to dot:
 
-    godepgraph github.com/kisielk/godepgraph | dot -Tpng -o godepgraph.png
+    godepgraph github.com/kmtym1998/godepgraph | dot -Tpng -o godepgraph.png
 
 By default godepgraph will display packages in the standard library in the
 graph, though it will not delve in to their dependencies.
@@ -31,10 +29,10 @@ graph, though it will not delve in to their dependencies.
 
 godepgraph uses a simple color scheme to denote different types of packages:
 
-  * *green*: a package that is part of the Go standard library, installed in `$GOROOT`.
-  * *blue*: a regular Go package found in `$GOPATH`.
-  * *yellow*: a vendored Go package found in `$GOPATH`.
-  * *orange*: a package found in `$GOPATH` that uses cgo by importing the special package "C".
+- _green_: a package that is part of the Go standard library, installed in `$GOROOT`.
+- _blue_: a regular Go package found in `$GOPATH`.
+- _yellow_: a vendored Go package found in `$GOPATH`.
+- _orange_: a package found in `$GOPATH` that uses cgo by importing the special package "C".
 
 ## Ignoring Imports
 

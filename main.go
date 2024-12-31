@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"flag"
 	"fmt"
 	"go/build"
@@ -20,31 +22,20 @@ var (
 	}
 	ignoredPrefixes []string
 	onlyPrefixes    []string
+	moduleName      string
 
-	ignoreStdlib   = flag.Bool("nostdlib", false, "ignore packages in the Go standard library")
-	ignoreVendor   = flag.Bool("novendor", false, "ignore packages in the vendor directory")
-	stopOnError    = flag.Bool("stoponerror", true, "stop on package import errors")
-	withGoroot     = flag.Bool("withgoroot", false, "show dependencies of packages in the Go standard library")
-	ignorePrefixes = flag.String("ignoreprefixes", "", "a comma-separated list of prefixes to ignore")
-	ignorePackages = flag.String("ignorepackages", "", "a comma-separated list of packages to ignore")
-	onlyPrefix     = flag.String("onlyprefixes", "", "a comma-separated list of prefixes to include")
-	tagList        = flag.String("tags", "", "a comma-separated list of build tags to consider satisfied during the build")
-	horizontal     = flag.Bool("horizontal", false, "lay out the dependency graph horizontally instead of vertically")
-	withTests      = flag.Bool("withtests", false, "include test packages")
-	maxLevel       = flag.Int("maxlevel", 256, "max level of go dependency graph")
+	goModPath = flag.String("gomodpath", "./go.mod", "path to go.mod file")
+	debugMode = flag.Bool("debug", false, "enable debug output")
 
 	buildTags    []string
 	buildContext = build.Default
 )
 
+const maxLevel = 256
+
 func init() {
-	flag.BoolVar(ignoreStdlib, "s", false, "(alias for -nostdlib) ignore packages in the Go standard library")
-	flag.StringVar(ignorePrefixes, "p", "", "(alias for -ignoreprefixes) a comma-separated list of prefixes to ignore")
-	flag.StringVar(ignorePackages, "i", "", "(alias for -ignorepackages) a comma-separated list of packages to ignore")
-	flag.StringVar(onlyPrefix, "o", "", "(alias for -onlyprefixes) a comma-separated list of prefixes to include")
-	flag.BoolVar(withTests, "t", false, "(alias for -withtests) include test packages")
-	flag.IntVar(maxLevel, "l", 256, "(alias for -maxlevel) maximum level of the go dependency graph")
-	flag.BoolVar(withGoroot, "d", false, "(alias for -withgoroot) show dependencies of packages in the Go standard library")
+	flag.StringVar(goModPath, "p", "./go.mod", "path to go.mod file")
+	flag.BoolVar(debugMode, "d", false, "enable debug output")
 }
 
 func main() {
@@ -53,42 +44,37 @@ func main() {
 	ids = make(map[string]string)
 	flag.Parse()
 
-	args := flag.Args()
-
-	if len(args) < 1 {
-		log.Fatal("need one package name to process")
-	}
-
-	if *ignorePrefixes != "" {
-		ignoredPrefixes = strings.Split(*ignorePrefixes, ",")
-	}
-	if *onlyPrefix != "" {
-		onlyPrefixes = strings.Split(*onlyPrefix, ",")
-	}
-	if *ignorePackages != "" {
-		for _, p := range strings.Split(*ignorePackages, ",") {
-			ignored[p] = true
-		}
-	}
-	if *tagList != "" {
-		buildTags = strings.Split(*tagList, ",")
-	}
 	buildContext.BuildTags = buildTags
 
 	cwd, err := os.Getwd()
 	if err != nil {
 		log.Fatalf("failed to get cwd: %s", err)
 	}
-	for _, a := range args {
-		if err := processPackage(cwd, a, 0, "", *stopOnError); err != nil {
-			log.Fatal(err)
+
+	goModFile, err := os.ReadFile(*goModPath)
+	if err != nil {
+		log.Fatalf("failed to read go.mod: %s", err)
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(goModFile))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "module ") {
+			moduleName = strings.TrimSpace(strings.TrimPrefix(line, "module "))
+			break
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		log.Fatalf("failed to read go.mod: %s", err)
+	}
+	if moduleName == "" {
+		log.Fatal("failed to get module name")
+	}
+
+	if err := processPackage(cwd, "./", 0, "", true); err != nil {
+		log.Fatal(err)
 	}
 
 	fmt.Println("digraph godep {")
-	if *horizontal {
-		fmt.Println(`rankdir="LR"`)
-	}
 	fmt.Print(`splines=ortho
 nodesep=0.4
 ranksep=0.8
@@ -128,7 +114,7 @@ edge [arrowsize="0.5"]
 		fmt.Printf("%s [label=\"%s\" color=\"%s\" URL=\"%s\" target=\"_blank\"];\n", pkgId, pkgName, color, pkgDocsURL(pkgName))
 
 		// Don't render imports from packages in Goroot
-		if pkg.Goroot && !*withGoroot {
+		if pkg.Goroot {
 			continue
 		}
 
@@ -150,7 +136,7 @@ func pkgDocsURL(pkgName string) string {
 }
 
 func processPackage(root string, pkgName string, level int, importedBy string, stopOnError bool) error {
-	if level++; level > *maxLevel {
+	if level++; level > maxLevel {
 		return nil
 	}
 	if ignored[pkgName] {
@@ -164,8 +150,17 @@ func processPackage(root string, pkgName string, level int, importedBy string, s
 		}
 	}
 
-	if isIgnored(pkg) {
+	if !(pkg.ImportPath == "./" || strings.HasPrefix(pkg.ImportPath, moduleName)) {
 		return nil
+	}
+
+	if *debugMode {
+		fmt.Fprintln(os.Stderr, "====================================")
+		fmt.Fprintln(os.Stderr, "🦠 pkg.ImportPath:", pkg.ImportPath)
+		fmt.Fprintln(os.Stderr, "🫚 root:", root)
+		fmt.Fprintln(os.Stderr, "🫚 pkgName:", pkgName)
+		fmt.Fprintln(os.Stderr, "🫚 importedBy:", importedBy)
+		fmt.Fprintln(os.Stderr, "")
 	}
 
 	if buildErr != nil {
@@ -175,7 +170,7 @@ func processPackage(root string, pkgName string, level int, importedBy string, s
 	pkgs[pkgName] = pkg
 
 	// Don't worry about dependencies for stdlib packages
-	if pkg.Goroot && !*withGoroot {
+	if pkg.Goroot {
 		return nil
 	}
 
@@ -191,10 +186,6 @@ func processPackage(root string, pkgName string, level int, importedBy string, s
 
 func getImports(pkg *build.Package) []string {
 	allImports := pkg.Imports
-	if *withTests {
-		allImports = append(allImports, pkg.TestImports...)
-		allImports = append(allImports, pkg.XTestImports...)
-	}
 	var imports []string
 	found := make(map[string]struct{})
 	for _, imp := range allImports {
@@ -240,10 +231,7 @@ func isIgnored(pkg *build.Package) bool {
 		return true
 	}
 
-	if *ignoreVendor && isVendored(pkg.ImportPath) {
-		return true
-	}
-	return ignored[pkg.ImportPath] || (pkg.Goroot && *ignoreStdlib) || hasPrefixes(pkg.ImportPath, ignoredPrefixes)
+	return ignored[pkg.ImportPath] || hasPrefixes(pkg.ImportPath, ignoredPrefixes)
 }
 
 func hasBuildErrors(pkg *build.Package) bool {
